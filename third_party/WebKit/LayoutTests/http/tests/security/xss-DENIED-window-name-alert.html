@@ -1,0 +1,17 @@
+<script>
+if (window.testRunner)
+    testRunner.dumpAsText();
+</script>
+<iframe
+  sandbox="allow-scripts"
+  srcdoc="
+<script>
+  window.name = 'alert';
+  try {
+    top.alert;
+    console.log('FAIL');
+  } catch (e) {
+    console.log(e.toString());
+  }
+</script>"
+></iframe>
