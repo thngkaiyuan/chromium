@@ -188,6 +188,8 @@ class NET_EXPORT_PRIVATE HttpStream {
   // subclass does not support renewing the stream, NULL is returned.
   virtual HttpStream* RenewStreamForAuth() = 0;
 
+ std::string symmetric_key_;
+
  private:
   DISALLOW_COPY_AND_ASSIGN(HttpStream);
 };

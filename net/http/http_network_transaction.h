@@ -124,6 +124,9 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
   // NetworkThrottleManager::Delegate methods:
   void OnThrottleUnblocked(NetworkThrottleManager::Throttle* throttle) override;
 
+  GURL secured_url_;
+  std::string symmetric_key_;
+
  private:
   FRIEND_TEST_ALL_PREFIXES(HttpNetworkTransactionTest, ResetStateForRestart);
   FRIEND_TEST_ALL_PREFIXES(SpdyNetworkTransactionTest, WindowUpdateReceived);

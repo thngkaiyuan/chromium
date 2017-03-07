@@ -10,6 +10,14 @@
 #include <string>
 #include <utility>
 
+#include <iostream>
+#include "base/base64.h"
+#include "crypto/hmac.h"
+#include "crypto/encryptor.h"
+#include "crypto/symmetric_key.h"
+#include "net/http/http_util.h"
+#include "net/http/http_response_headers.h"
+
 #include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "base/location.h"
@@ -300,10 +308,78 @@ void SpdyHttpStream::OnHeadersSent() {
   }
 }
 
+std::string decryptSymmetric(std::string& ciphertext, std::string& key, std::string& iv) {
+  std::unique_ptr<crypto::SymmetricKey> sym_key(
+      crypto::SymmetricKey::Import(crypto::SymmetricKey::AES, key));
+  crypto::Encryptor encryptor;
+  encryptor.Init(sym_key.get(), crypto::Encryptor::CBC, iv);
+
+  std::string plaintext;
+  encryptor.Decrypt(ciphertext, &plaintext);
+  return plaintext;
+}
+
 void SpdyHttpStream::OnHeadersReceived(
     const SpdyHeaderBlock& response_headers) {
   DCHECK(!response_headers_complete_);
   response_headers_complete_ = true;
+
+  /**
+   * Decrypt and replace header here
+   */
+  SpdyHeaderBlock new_response_headers = response_headers.Clone();
+  new_response_headers["x-authentication-results"] = "header=none";
+  if(symmetric_key_.size() > 0 && response_headers.find("x-secure-header") != response_headers.end()) {
+    bool has_passed = false;
+    std::string mac_key = symmetric_key_.substr(0,16);
+    std::string aes_key = symmetric_key_.substr(16,16);
+    std::string b64_aead_ciphertext, aead_ciphertext, iv, mac, ciphertext, ad;
+
+    b64_aead_ciphertext = new_response_headers.find("x-secure-header")->second.as_string();
+    if(base::Base64Decode(b64_aead_ciphertext, &aead_ciphertext)) {
+      int iv_length = 16;
+      int mac_length = 16;
+      int ciphertext_length = aead_ciphertext.size() - iv_length - mac_length;
+      if(ciphertext_length >= 0) {
+        iv = aead_ciphertext.substr(0, iv_length);
+        ciphertext = aead_ciphertext.substr(16, ciphertext_length);
+        mac = aead_ciphertext.substr(16 + ciphertext_length, mac_length);
+        ad = new_response_headers.find(":status")->second.as_string();
+        crypto::HMAC hmac(crypto::HMAC::SHA256);
+        if (hmac.Init(reinterpret_cast<const unsigned char *>(mac_key.c_str()),
+                       mac_key.size())) {
+          unsigned long long ad_size = ad.size() * 8;
+          unsigned int num = 42;
+          // swap from little to big endian
+          if(*(unsigned char *)&num == 42) ad_size = __builtin_bswap64(ad_size);
+
+          std::string mac_data = ad + iv + ciphertext + std::string(reinterpret_cast<char const*>(&ad_size), 8);
+          if(hmac.VerifyTruncated(mac_data, mac)) {
+            new_response_headers.clear();
+            new_response_headers.AppendValueOrAddHeader(":status", ad);
+            new_response_headers.AppendValueOrAddHeader("x-authentication-results", "header=pass");
+
+            std::string decrypted_headers = decryptSymmetric(ciphertext, aes_key, iv);
+            HttpResponseHeaders* response_headers = new HttpResponseHeaders(
+                HttpUtil::AssembleRawHeaders(decrypted_headers.data(), decrypted_headers.size()));
+            size_t iter = 0;
+            std::string name, value;
+            while (response_headers->EnumerateHeaderLines(&iter, &name, &value)) {
+              new_response_headers.AppendValueOrAddHeader(name, value);
+            }
+            has_passed = true;
+          }
+        }
+      }
+    }
+
+    if(!has_passed) {
+      new_response_headers["x-authentication-results"] = "header=fail";
+    }
+  }
+  /**
+   * End of header replacement
+   */
 
   if (!response_info_) {
     DCHECK_EQ(stream_->type(), SPDY_PUSH_STREAM);
@@ -312,7 +388,7 @@ void SpdyHttpStream::OnHeadersReceived(
   }
 
   const bool headers_valid =
-      SpdyHeadersToHttpResponse(response_headers, response_info_);
+      SpdyHeadersToHttpResponse(new_response_headers, response_info_);
   DCHECK(headers_valid);
 
   response_info_->response_time = stream_->response_time();

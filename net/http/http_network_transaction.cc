@@ -9,6 +9,16 @@
 #include <utility>
 #include <vector>
 
+#include <iostream>
+#include "base/base64.h"
+#include "base/strings/stringprintf.h"
+#include "crypto/hmac.h"
+#include "crypto/random.h"
+#include "crypto/encryptor.h"
+#include "crypto/symmetric_key.h"
+#include "net/cert/pem_tokenizer.h"
+#include "third_party/boringssl/src/include/openssl/rsa.h"
+
 #include "base/base64url.h"
 #include "base/bind.h"
 #include "base/bind_helpers.h"
@@ -1174,6 +1184,101 @@ int HttpNetworkTransaction::DoBuildRequestComplete(int result) {
   return result;
 }
 
+// Parses |pem_data| for a PEM block of |pem_type|.
+// Returns true if a |pem_type| block is found, storing the decoded result in
+// |der_output|.
+bool GetDERFromPEM(const std::string& pem_data,
+                   const std::string& pem_type,
+                   std::vector<uint8_t>* der_output) {
+  std::vector<std::string> headers;
+  headers.push_back(pem_type);
+  net::PEMTokenizer pem_tokenizer(pem_data, headers);
+  if (!pem_tokenizer.GetNext()) {
+    return false;
+  }
+
+  der_output->assign(pem_tokenizer.data().begin(), pem_tokenizer.data().end());
+  return true;
+}
+
+std::vector<uint8_t> getPublicKey(std::string& domain) {
+  // TODO
+  if(domain != "untampered.info") return std::vector<uint8_t>();
+
+  std::string pem = "-----BEGIN RSA PUBLIC KEY-----\n"
+      "MIIBCgKCAQEAmnmfwPEjwS37kLYgyQ0xxTEnittneLBD7KbpDB7FlU+66VzTKs5D\n"
+      "g+0rVtt+96gyD0W4UfI9bMLPjSvyjkoh8Vzg/5EBI0j+ZEo3hw3WHsD1VlSmrJ7p\n"
+      "NtIjErriK8KiNT1/dbeCqR0aZjhBC36AkNO4MmWIFKUwXLiyn/PVF40zndNSB1e7\n"
+      "lN1pQCDJAD431tsyd8CUUa+LoT3kQ/m7z0+9OgIRIsa62g1Ax5IQsnBGF6E1BcWg\n"
+      "448va8L7OATEsAdR0Y93KBxgbcKLf91in9PXqgnfjZzvMM32S2Wwu/ZGyOdK7WtW\n"
+      "3V2nH9FDDPJ7ehkRj33hKiDCLEi9VuJQxwIDAQAB\n"
+      "-----END RSA PUBLIC KEY-----";
+  std::vector<uint8_t> public_key_data;
+  GetDERFromPEM(pem, "RSA PUBLIC KEY", &public_key_data);
+  return public_key_data;
+}
+
+std::string encryptRSA(std::string& plaintext, std::vector<uint8_t> publicKey) {
+  bssl::UniquePtr<RSA> key(
+      RSA_public_key_from_bytes(publicKey.data(), publicKey.size()));
+
+  uint8_t ciphertext[256];
+  size_t ciphertext_len = 0;
+  RSA_encrypt(key.get(), &ciphertext_len, ciphertext,
+              sizeof(ciphertext), reinterpret_cast<const unsigned char*>(plaintext.c_str()), plaintext.size(),
+              RSA_PKCS1_PADDING);
+  return std::string(reinterpret_cast<const char*>(ciphertext), ciphertext_len);
+}
+
+std::string generateSymmetricKey() {
+  std::unique_ptr<crypto::SymmetricKey> key(
+      crypto::SymmetricKey::GenerateRandomKey(crypto::SymmetricKey::AES, 256));
+  std::string raw_key;
+  key->GetRawKey(&raw_key);
+  return raw_key;
+}
+
+std::string generateRandomBytes(int size) {
+  std::string bytes;
+  crypto::RandBytes(base::WriteInto(&bytes, size+1), size);
+  return bytes;
+}
+
+std::string encryptSymmetric(std::string& plaintext, std::string& key) {
+  std::unique_ptr<crypto::SymmetricKey> sym_key(
+      crypto::SymmetricKey::Import(crypto::SymmetricKey::AES, key));
+  crypto::Encryptor encryptor;
+  std::string iv = generateRandomBytes(16);
+  encryptor.Init(sym_key.get(), crypto::Encryptor::CBC, iv);
+
+  std::string ciphertext;
+  encryptor.Encrypt(plaintext, &ciphertext);
+  return iv + ciphertext;
+}
+
+std::string strToB64(std::string& str) {
+  std::string output;
+  base::Base64Encode(str, &output);
+  return output;
+}
+
+std::string getRequestLineWithEmptyPath(std::string& requestHeaders) {
+  uint64_t idx = requestHeaders.find(" /");
+  return requestHeaders.substr(0, idx) + " / HTTP/1.1";
+}
+
+std::string encryptAndEnclose(std::string& requestHeaders, std::vector<uint8_t> publicKey, std::string& host, HttpRequestHeaders* newHeaders) {
+  std::string symmetricKey = generateSymmetricKey();
+  std::string encryptedHeader = encryptSymmetric(requestHeaders, symmetricKey);
+  std::string b64_encryptedHeader = strToB64(encryptedHeader);
+  std::string encryptedSymmetricKey = encryptRSA(symmetricKey, publicKey);
+  std::string b64_encryptedSymmetricKey = strToB64(encryptedSymmetricKey);
+
+  newHeaders->SetHeader("host", host);
+  newHeaders->SetHeader("x-secure-header", "k="+b64_encryptedSymmetricKey+"; c="+b64_encryptedHeader);
+  return symmetricKey;
+}
+
 int HttpNetworkTransaction::DoSendRequest() {
   // TODO(mmenke): Remove ScopedTracker below once crbug.com/424359 is fixed.
   tracked_objects::ScopedTracker tracking_profile(
@@ -1183,11 +1288,45 @@ int HttpNetworkTransaction::DoSendRequest() {
   send_start_time_ = base::TimeTicks::Now();
   next_state_ = STATE_SEND_REQUEST_COMPLETE;
 
+  /**
+   * Modify request (headers) here
+   */
+  std::unique_ptr<HttpRequestHeaders> new_request_headers(new HttpRequestHeaders());
+  std::string domain = request_->url.HostNoBrackets();
+  std::vector<uint8_t> publicKey = getPublicKey(domain);
+  bool shouldSecure = request_->url.SchemeIsCryptographic() && publicKey.size() > 0;
+  if(shouldSecure) {
+    std::string request_line = request_->method + " " + request_->url.PathForRequest() + " HTTP/1.1\r\n";
+    std::string request = request_line + request_headers_.ToString();
+    stream_->symmetric_key_ = encryptAndEnclose(request, publicKey, domain, new_request_headers.get());
+    request_headers_ = *new_request_headers.get();
+
+    HttpRequestInfo* request_info = new HttpRequestInfo(*request_);
+    request_info->url = request_->url.GetWithEmptyPath();
+    secured_url_ = request_->url;
+    request_ = request_info;
+  }
+  /**
+   * End of headers modification
+   */
+
   return stream_->SendRequest(request_headers_, &response_, io_callback_);
 }
 
 int HttpNetworkTransaction::DoSendRequestComplete(int result) {
   send_end_time_ = base::TimeTicks::Now();
+
+  /**
+   * Revert modification to requestInfo
+   */
+  if(stream_->symmetric_key_.size() > 0) {
+    HttpRequestInfo* request_info = new HttpRequestInfo(*request_);
+    request_info->url = secured_url_;
+    request_ = request_info;
+  }
+  /**
+   * End of reversion
+   */
 
   if (result == ERR_HTTP_1_1_REQUIRED ||
       result == ERR_PROXY_HTTP_1_1_REQUIRED) {
@@ -1305,6 +1444,7 @@ int HttpNetworkTransaction::DoReadHeadersComplete(int result) {
     return rv;
 
   headers_valid_ = true;
+
   return OK;
 }
 
