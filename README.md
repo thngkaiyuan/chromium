@@ -1,6 +1,6 @@
 # Chromium
 
-Chromium, but more secure.
+Chromium, but more secure. It is even better when paired with [this extension](https://github.com/thngkaiyuan/secure-channel).
 
 # Todo
 
