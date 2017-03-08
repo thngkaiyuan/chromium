@@ -9,3 +9,4 @@ Chromium, but more secure.
 - [ ] Cache retrieved public keys
 - [ ] Add encryption for request body
 - [ ] Add AEAD for response body
+
