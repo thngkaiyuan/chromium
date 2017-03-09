@@ -1291,11 +1291,17 @@ int HttpNetworkTransaction::DoSendRequest() {
   /**
    * Modify request (headers) here
    */
-  std::unique_ptr<HttpRequestHeaders> new_request_headers(new HttpRequestHeaders());
   std::string domain = request_->url.HostNoBrackets();
   std::vector<uint8_t> publicKey = getPublicKey(domain);
   bool shouldSecure = request_->url.SchemeIsCryptographic() && publicKey.size() > 0;
   if(shouldSecure) {
+    std::unique_ptr<HttpRequestHeaders> new_request_headers(new HttpRequestHeaders());
+    std::string content_length, content_type;
+    // These are necessary for POST data
+    if(request_headers_.GetHeader("content-length", &content_length))
+      new_request_headers->SetHeader("content-length", content_length);
+    if(request_headers_.GetHeader("content-type", &content_type))
+      new_request_headers->SetHeader("content-type", content_type);
     std::string request_line = request_->method + " " + request_->url.PathForRequest() + " HTTP/1.1\r\n";
     std::string request = request_line + request_headers_.ToString();
     stream_->symmetric_key_ = encryptAndEnclose(request, publicKey, domain, new_request_headers.get());
