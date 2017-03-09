@@ -328,7 +328,7 @@ void SpdyHttpStream::OnHeadersReceived(
    * Decrypt and replace header here
    */
   SpdyHeaderBlock new_response_headers = response_headers.Clone();
-  new_response_headers["x-authentication-results"] = "header=none";
+  if(symmetric_key_.size() > 0) new_response_headers["x-authentication-results"] = "header=none";
   if(symmetric_key_.size() > 0 && response_headers.find("x-secure-header") != response_headers.end()) {
     bool has_passed = false;
     std::string mac_key = symmetric_key_.substr(0,16);
