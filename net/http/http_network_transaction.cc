@@ -1296,12 +1296,21 @@ int HttpNetworkTransaction::DoSendRequest() {
   bool shouldSecure = request_->url.SchemeIsCryptographic() && publicKey.size() > 0;
   if(shouldSecure) {
     std::unique_ptr<HttpRequestHeaders> new_request_headers(new HttpRequestHeaders());
+
     std::string content_length, content_type;
     // These are necessary for POST data
-    if(request_headers_.GetHeader("content-length", &content_length))
-      new_request_headers->SetHeader("content-length", content_length);
+    if(request_headers_.GetHeader("content-length", &content_length)){
+      uint64_t original_content_length = std::stoull(content_length);
+      uint64_t padding_length = (original_content_length % 16) == 0 ? 16 : (16 - (original_content_length % 16));
+      uint64_t new_content_length = 16 + original_content_length + padding_length;
+      new_content_length = ((new_content_length * 4) + 2) / 3; // base64 length
+      new_content_length += 2; // "c=..."
+      std::string new_content_length_str = std::to_string(new_content_length);
+      new_request_headers->SetHeader("content-length", new_content_length_str);
+    }
     if(request_headers_.GetHeader("content-type", &content_type))
       new_request_headers->SetHeader("content-type", content_type);
+
     std::string request_line = request_->method + " " + request_->url.PathForRequest() + " HTTP/1.1\r\n";
     std::string request = request_line + request_headers_.ToString();
     stream_->symmetric_key_ = encryptAndEnclose(request, publicKey, domain, new_request_headers.get());

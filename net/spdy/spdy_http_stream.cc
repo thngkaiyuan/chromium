@@ -12,8 +12,10 @@
 
 #include <iostream>
 #include "base/base64.h"
+#include "base/strings/string_util.h"
 #include "crypto/hmac.h"
 #include "crypto/encryptor.h"
+#include "crypto/random.h"
 #include "crypto/symmetric_key.h"
 #include "net/http/http_util.h"
 #include "net/http/http_response_headers.h"
@@ -308,6 +310,24 @@ void SpdyHttpStream::OnHeadersSent() {
   }
 }
 
+std::string generateRandomBytes2(int size) {
+  std::string bytes;
+  crypto::RandBytes(base::WriteInto(&bytes, size+1), size);
+  return bytes;
+}
+
+std::string encryptSymmetric2(std::string& plaintext, std::string& key) {
+  std::unique_ptr<crypto::SymmetricKey> sym_key(
+      crypto::SymmetricKey::Import(crypto::SymmetricKey::AES, key));
+  crypto::Encryptor encryptor;
+  std::string iv = generateRandomBytes2(16);
+  encryptor.Init(sym_key.get(), crypto::Encryptor::CBC, iv);
+
+  std::string ciphertext;
+  encryptor.Encrypt(plaintext, &ciphertext);
+  return iv + ciphertext;
+}
+
 std::string decryptSymmetric(std::string& ciphertext, std::string& key, std::string& iv) {
   std::unique_ptr<crypto::SymmetricKey> sym_key(
       crypto::SymmetricKey::Import(crypto::SymmetricKey::AES, key));
@@ -543,6 +563,34 @@ void SpdyHttpStream::OnRequestBodyReadCompleted(int status) {
   } else {
     CHECK_GT(request_body_buf_size_, 0);
   }
+
+  /**
+   * Modify request body here
+   */
+  if(symmetric_key_.size() > 0) {
+    char* post_data_ptr = request_body_buf_->data();
+    std::string post_data = std::string(post_data_ptr, request_body_buf_size_);
+    std::string ciphertext = encryptSymmetric2(post_data, symmetric_key_);
+    std::string b64_ciphertext;
+    base::Base64Encode(ciphertext, &b64_ciphertext);
+    b64_ciphertext.erase(std::remove(b64_ciphertext.begin(), b64_ciphertext.end(), '='), b64_ciphertext.end()); // remove equals
+    std::string final_post_data = "c=" + b64_ciphertext;
+    scoped_refptr<IOBufferWithSize> buf = new IOBufferWithSize(final_post_data.size());
+    char* new_post_data_ptr = buf.get()->data();
+
+    for(unsigned long i = 0; i < final_post_data.size(); i++) {
+      if(final_post_data[i] == '+') final_post_data[i] = '-'; // url-safe b64encode
+      if(final_post_data[i] == '/') final_post_data[i] = '_'; // url-safe b64encode
+      new_post_data_ptr[i] = final_post_data[i];
+    }
+
+    request_body_buf_ = buf;
+    request_body_buf_size_ = final_post_data.size();
+  }
+  /**
+   * Finish modifications to request body here
+   */
+
   stream_->SendData(request_body_buf_.get(),
                     request_body_buf_size_,
                     eof ? NO_MORE_DATA_TO_SEND : MORE_DATA_TO_SEND);
