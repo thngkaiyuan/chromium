@@ -9,5 +9,5 @@ Chromium, but more secure. It is even better when paired with [this extension](h
 - [ ] Retrieve key and enrollment information from public key server
 - [ ] Cache retrieved public keys
 - [x] Add encryption for request body
-- [ ] Add AEAD for response body
+- [x] Add AEAD for response body
 
