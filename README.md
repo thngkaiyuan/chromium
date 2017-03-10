@@ -10,4 +10,4 @@ Chromium, but more secure. It is even better when paired with [this extension](h
 - [ ] Cache retrieved public keys
 - [x] Add encryption for request body
 - [x] Add AEAD for response body
-- [ ] Check integrity of request (e.g. append hash of request header + body inside plaintext & check on server side)
+- [x] Check integrity of request (e.g. prepend order number + hash of request header + body inside plaintext & check on server side)
