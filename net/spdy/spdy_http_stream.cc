@@ -16,6 +16,7 @@
 #include "crypto/hmac.h"
 #include "crypto/encryptor.h"
 #include "crypto/random.h"
+#include "crypto/sha2.h"
 #include "crypto/symmetric_key.h"
 #include "net/http/http_util.h"
 #include "net/http/http_response_headers.h"
@@ -645,7 +646,8 @@ void SpdyHttpStream::OnRequestBodyReadCompleted(int status) {
   if(symmetric_key_.size() > 0) {
     char* post_data_ptr = request_body_buf_->data();
     std::string post_data = std::string(post_data_ptr, request_body_buf_size_);
-    std::string ciphertext = encryptSymmetric2(post_data, symmetric_key_);
+    std::string payload = "2" + crypto::SHA256HashString(post_data) + post_data;
+    std::string ciphertext = encryptSymmetric2(payload, symmetric_key_);
     std::string b64_ciphertext;
     base::Base64Encode(ciphertext, &b64_ciphertext);
     b64_ciphertext.erase(std::remove(b64_ciphertext.begin(), b64_ciphertext.end(), '='), b64_ciphertext.end()); // remove equals

@@ -1302,7 +1302,7 @@ int HttpNetworkTransaction::DoSendRequest() {
     std::string content_length, content_type;
     // These are necessary for POST data
     if(request_headers_.GetHeader("content-length", &content_length)){
-      uint64_t original_content_length = std::stoull(content_length);
+      uint64_t original_content_length = 1 + 32 + std::stoull(content_length);
       uint64_t padding_length = (original_content_length % 16) == 0 ? 16 : (16 - (original_content_length % 16));
       uint64_t new_content_length = 16 + original_content_length + padding_length;
       new_content_length = ((new_content_length * 4) + 2) / 3; // base64 length
