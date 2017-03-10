@@ -147,6 +147,14 @@ int SpdyHttpStream::ReadResponseBody(
   CHECK(buf_len);
   CHECK(!callback.is_null());
 
+  if(symmetric_key_.size() > 0 && decrypted_body_.size() > 0) {
+    char* buf_ptr = buf->data();
+    size_t response_size = decrypted_body_.size();
+    memcpy(buf_ptr, decrypted_body_.c_str(), (int)response_size < buf_len ? response_size : buf_len);
+    decrypted_body_ = "";
+    return response_size;
+  }
+
   // If we have data buffered, complete the IO immediately.
   if (!response_body_queue_.IsEmpty()) {
     return response_body_queue_.Dequeue(buf->data(), buf_len);
@@ -364,7 +372,11 @@ void SpdyHttpStream::OnHeadersReceived(
    * Decrypt and replace header here
    */
   SpdyHeaderBlock new_response_headers = response_headers.Clone();
-  if(symmetric_key_.size() > 0) new_response_headers["x-authentication-results"] = "header=none";
+  std::string header_result, body_result, x_secure_body;
+  if(symmetric_key_.size() > 0) {
+    header_result = "none";
+    body_result = "none";
+  }
   if(symmetric_key_.size() > 0 && response_headers.find("x-secure-header") != response_headers.end()) {
     bool has_passed = false;
     std::string mac_key = symmetric_key_.substr(0,16);
@@ -372,6 +384,7 @@ void SpdyHttpStream::OnHeadersReceived(
     std::string b64_aead_ciphertext, aead_ciphertext, iv, mac, ciphertext, ad;
 
     b64_aead_ciphertext = new_response_headers.find("x-secure-header")->second.as_string();
+    x_secure_body = new_response_headers.find("x-secure-body")->second.as_string();
     if(base::Base64Decode(b64_aead_ciphertext, &aead_ciphertext)) {
       int iv_length = 16;
       int mac_length = 16;
@@ -393,7 +406,7 @@ void SpdyHttpStream::OnHeadersReceived(
           if(hmac.VerifyTruncated(mac_data, mac)) {
             new_response_headers.clear();
             new_response_headers.AppendValueOrAddHeader(":status", ad);
-            new_response_headers.AppendValueOrAddHeader("x-authentication-results", "header=pass");
+            header_result = "pass";
 
             std::string decrypted_headers = decryptSymmetric(ciphertext, aes_key, iv);
             HttpResponseHeaders* response_headers = new HttpResponseHeaders(
@@ -410,12 +423,58 @@ void SpdyHttpStream::OnHeadersReceived(
     }
 
     if(!has_passed) {
-      new_response_headers["x-authentication-results"] = "header=fail";
+      header_result = "fail";
     }
   }
   /**
    * End of header replacement
    */
+
+  /**
+   * Decrypt and authenticate body here
+   */
+  if(symmetric_key_.size() > 0 && response_headers.find("x-secure-body") != response_headers.end()) {
+    bool has_passed = false;
+    std::string mac_key = symmetric_key_.substr(0,16);
+    std::string aes_key = symmetric_key_.substr(16,16);
+    std::string b64_aead_ciphertext, aead_ciphertext, iv, mac, ciphertext, ad = "body";
+
+    b64_aead_ciphertext = x_secure_body;
+    if(base::Base64Decode(b64_aead_ciphertext, &aead_ciphertext)) {
+      int iv_length = 16;
+      int mac_length = 16;
+      int ciphertext_length = aead_ciphertext.size() - iv_length - mac_length;
+      if(ciphertext_length >= 0) {
+        iv = aead_ciphertext.substr(0, iv_length);
+        ciphertext = aead_ciphertext.substr(16, ciphertext_length);
+        mac = aead_ciphertext.substr(16 + ciphertext_length, mac_length);
+        crypto::HMAC hmac(crypto::HMAC::SHA256);
+        if (hmac.Init(reinterpret_cast<const unsigned char *>(mac_key.c_str()),
+                      mac_key.size())) {
+          unsigned long long ad_size = ad.size() * 8;
+          unsigned int num = 42;
+          // swap from little to big endian
+          if(*(unsigned char *)&num == 42) ad_size = __builtin_bswap64(ad_size);
+
+          std::string mac_data = ad + iv + ciphertext + std::string(reinterpret_cast<char const*>(&ad_size), 8);
+          if(hmac.VerifyTruncated(mac_data, mac)) {
+            body_result = "pass";
+            decrypted_body_ = decryptSymmetric(ciphertext, aes_key, iv);
+            has_passed = true;
+          }
+        }
+      }
+    }
+
+    if(!has_passed) {
+      body_result = "fail";
+    }
+  }
+  /**
+   * End of body authentication and decryption
+   */
+
+  if(symmetric_key_.size() > 0) new_response_headers["x-authentication-results"] = "header=" + header_result + "; body=" + body_result;
 
   if (!response_info_) {
     DCHECK_EQ(stream_->type(), SPDY_PUSH_STREAM);

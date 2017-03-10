@@ -189,6 +189,7 @@ class NET_EXPORT_PRIVATE HttpStream {
   virtual HttpStream* RenewStreamForAuth() = 0;
 
   std::string symmetric_key_;
+  std::string decrypted_body_;
   HttpRequestInfo* secured_request_info_;
   HttpRequestHeaders* secured_request_headers_;
 
