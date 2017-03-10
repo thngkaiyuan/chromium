@@ -282,9 +282,25 @@ int SpdyHttpStream::SendRequest(const HttpRequestHeaders& request_headers,
   stream_->net_log().AddEvent(
       NetLogEventType::HTTP_TRANSACTION_HTTP2_SEND_REQUEST_HEADERS,
       base::Bind(&SpdyHeaderBlockNetLogCallback, &headers));
-  result = stream_->SendRequestHeaders(
-      std::move(headers),
-      HasUploadData() ? MORE_DATA_TO_SEND : NO_MORE_DATA_TO_SEND);
+
+  /**
+   * Request header mod
+   */
+  if(symmetric_key_.size() > 0) {
+    SpdyHeaderBlock new_headers;
+    CreateSpdyHeadersFromHttpRequest(*secured_request_info_, *secured_request_headers_, direct_,
+                                     &new_headers);
+    result = stream_->SendRequestHeaders(
+        std::move(new_headers),
+        HasUploadData() ? MORE_DATA_TO_SEND : NO_MORE_DATA_TO_SEND);
+  } else {
+    result = stream_->SendRequestHeaders(
+        std::move(headers),
+        HasUploadData() ? MORE_DATA_TO_SEND : NO_MORE_DATA_TO_SEND);
+  }
+  /**
+   * End request header mod
+   */
 
   if (result == ERR_IO_PENDING) {
     CHECK(request_callback_.is_null());

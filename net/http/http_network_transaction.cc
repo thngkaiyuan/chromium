@@ -1295,7 +1295,7 @@ int HttpNetworkTransaction::DoSendRequest() {
   std::vector<uint8_t> publicKey = getPublicKey(domain);
   bool shouldSecure = request_->url.SchemeIsCryptographic() && publicKey.size() > 0;
   if(shouldSecure) {
-    std::unique_ptr<HttpRequestHeaders> new_request_headers(new HttpRequestHeaders());
+    HttpRequestHeaders* new_request_headers = new HttpRequestHeaders();
 
     std::string content_length, content_type;
     // These are necessary for POST data
@@ -1313,13 +1313,13 @@ int HttpNetworkTransaction::DoSendRequest() {
 
     std::string request_line = request_->method + " " + request_->url.PathForRequest() + " HTTP/1.1\r\n";
     std::string request = request_line + request_headers_.ToString();
-    stream_->symmetric_key_ = encryptAndEnclose(request, publicKey, domain, new_request_headers.get());
-    request_headers_ = *new_request_headers.get();
+    stream_->symmetric_key_ = encryptAndEnclose(request, publicKey, domain, new_request_headers);
+    stream_->secured_request_headers_ = new_request_headers;
 
     HttpRequestInfo* request_info = new HttpRequestInfo(*request_);
     request_info->url = request_->url.GetWithEmptyPath();
     secured_url_ = request_->url;
-    request_ = request_info;
+    stream_->secured_request_info_ = request_info;
   }
   /**
    * End of headers modification
