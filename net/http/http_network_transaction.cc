@@ -14,6 +14,7 @@
 #include "base/strings/stringprintf.h"
 #include "crypto/hmac.h"
 #include "crypto/random.h"
+#include "crypto/sha2.h"
 #include "crypto/encryptor.h"
 #include "crypto/symmetric_key.h"
 #include "net/cert/pem_tokenizer.h"
@@ -1269,7 +1270,8 @@ std::string getRequestLineWithEmptyPath(std::string& requestHeaders) {
 
 std::string encryptAndEnclose(std::string& requestHeaders, std::vector<uint8_t> publicKey, std::string& host, HttpRequestHeaders* newHeaders) {
   std::string symmetricKey = generateSymmetricKey();
-  std::string encryptedHeader = encryptSymmetric(requestHeaders, symmetricKey);
+  std::string encryptionPayload = "1" + crypto::SHA256HashString(requestHeaders) + requestHeaders;
+  std::string encryptedHeader = encryptSymmetric(encryptionPayload, symmetricKey);
   std::string b64_encryptedHeader = strToB64(encryptedHeader);
   std::string encryptedSymmetricKey = encryptRSA(symmetricKey, publicKey);
   std::string b64_encryptedSymmetricKey = strToB64(encryptedSymmetricKey);
