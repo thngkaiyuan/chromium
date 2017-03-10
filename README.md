@@ -2,6 +2,15 @@
 
 Chromium, but more secure. It is even better when paired with [this extension](https://github.com/thngkaiyuan/secure-channel).
 
+![image](https://cloud.githubusercontent.com/assets/10496851/23801645/db71b7ee-05eb-11e7-9f59-50de91658526.png)
+
+![image](https://cloud.githubusercontent.com/assets/10496851/23801924/b4b23b0a-05ec-11e7-85c5-5342646a3015.png)
+
+# Security Properties
+
+- Client to Origin Server Confidentiality & Integrity
+- Origin Server to Client Confidentiality, Integrity & Authenticity
+
 # Todo
 
 - [x] Add logic and visuals for failing checks
