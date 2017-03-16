@@ -23,8 +23,8 @@ What an eavesdropper at the application layer would see during a response:
 
 - [x] Add logic and visuals for failing checks
 - [x] Change names from "Integrity Guard" to "Secure Channel"
-- [ ] Retrieve key and enrollment information from public key server
-- [ ] Cache retrieved public keys
+- [x] Retrieve key and enrollment information from public key server
+- [x] Cache retrieved public keys
 - [x] Add encryption for request body
 - [x] Add AEAD for response body
 - [x] Check integrity of request (e.g. prepend order number + hash of request header + body inside plaintext & check on server side)
