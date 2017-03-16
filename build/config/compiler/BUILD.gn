@@ -1245,7 +1245,7 @@ config("no_rtti") {
 config("wexit_time_destructors") {
   # TODO: Enable on Windows too, http://crbug.com/404525
   if (is_clang && !is_win) {
-    cflags = [ "-Wexit-time-destructors" ]
+    cflags = [  ]
   }
 }
 

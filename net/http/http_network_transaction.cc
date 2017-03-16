@@ -8,8 +8,11 @@
 #include <set>
 #include <utility>
 #include <vector>
+#include <mutex>  
+#include <unordered_map>  
 
 #include <iostream>
+#include <curl/curl.h>
 #include "base/base64.h"
 #include "base/strings/stringprintf.h"
 #include "crypto/hmac.h"
@@ -1202,18 +1205,41 @@ bool GetDERFromPEM(const std::string& pem_data,
   return true;
 }
 
-std::vector<uint8_t> getPublicKey(std::string& domain) {
-  // TODO
-  if(domain != "untampered.info") return std::vector<uint8_t>();
+static std::mutex public_key_mutex;    
+static std::unordered_map<std::string, std::string> public_key_map;
 
-  std::string pem = "-----BEGIN RSA PUBLIC KEY-----\n"
-      "MIIBCgKCAQEAmnmfwPEjwS37kLYgyQ0xxTEnittneLBD7KbpDB7FlU+66VzTKs5D\n"
-      "g+0rVtt+96gyD0W4UfI9bMLPjSvyjkoh8Vzg/5EBI0j+ZEo3hw3WHsD1VlSmrJ7p\n"
-      "NtIjErriK8KiNT1/dbeCqR0aZjhBC36AkNO4MmWIFKUwXLiyn/PVF40zndNSB1e7\n"
-      "lN1pQCDJAD431tsyd8CUUa+LoT3kQ/m7z0+9OgIRIsa62g1Ax5IQsnBGF6E1BcWg\n"
-      "448va8L7OATEsAdR0Y93KBxgbcKLf91in9PXqgnfjZzvMM32S2Wwu/ZGyOdK7WtW\n"
-      "3V2nH9FDDPJ7ehkRj33hKiDCLEi9VuJQxwIDAQAB\n"
-      "-----END RSA PUBLIC KEY-----";
+static size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp)
+{
+    ((std::string*)userp)->append((char*)contents, size * nmemb);
+    return size * nmemb;
+}
+
+std::string getPublicKeyFromServer(std::string& domain) {
+  CURL *curl;
+  CURLcode res;  
+  std::string pem;
+  std::string key_server_base = "http://188.166.213.229/keys/";
+  curl = curl_easy_init();
+  if(curl) {
+      std::string key_server_url = key_server_base + domain;
+      curl_easy_setopt(curl, CURLOPT_URL, key_server_url.c_str());
+      curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+      curl_easy_setopt(curl, CURLOPT_WRITEDATA, &pem);
+      res = curl_easy_perform(curl);
+      curl_easy_cleanup(curl);
+    }
+  return pem;
+}
+
+std::vector<uint8_t> getPublicKey(std::string& domain) {
+  std::lock_guard<std::mutex> lg(public_key_mutex); // Lock will be held from here to end of function
+
+  if (public_key_map.find(domain) == public_key_map.end()) {
+      std::string public_key = getPublicKeyFromServer(domain);
+      public_key_map[domain] = public_key;
+  }
+  std::string pem = public_key_map.find(domain)->second;
+
   std::vector<uint8_t> public_key_data;
   GetDERFromPEM(pem, "RSA PUBLIC KEY", &public_key_data);
   return public_key_data;
