@@ -1218,13 +1218,14 @@ std::string getPublicKeyFromServer(std::string& domain) {
   CURL *curl;
   CURLcode res;  
   std::string pem;
-  std::string key_server_base = "http://188.166.213.229/keys/";
+  std::string key_server_base = "https://188.166.213.229/keys/";
   curl = curl_easy_init();
   if(curl) {
       std::string key_server_url = key_server_base + domain;
       curl_easy_setopt(curl, CURLOPT_URL, key_server_url.c_str());
       curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
       curl_easy_setopt(curl, CURLOPT_WRITEDATA, &pem);
+      curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
       res = curl_easy_perform(curl);
       curl_easy_cleanup(curl);
     }
